@@ -128,14 +128,20 @@ func UpdateUser(id uint, username string, password string) *ResponseBody {
 }
 
 // DelUser 删除用户
-func DelUser(id uint) *ResponseBody {
+func DelUser(id uint, requestUser string) *ResponseBody {
 	responseBody := ResponseBody{Msg: "success"}
 	defer TimeCost(time.Now(), &responseBody)
 	mysql := core.GetMysql()
 	if err := mysql.DeleteUser(id); err != nil {
 		responseBody.Msg = err.Error()
 	} else {
-		trojan.Restart()
+		userList := UserList(requestUser)
+		if userList.Msg != "success" {
+			responseBody.Msg = userList.Msg
+			return &responseBody
+		}
+		responseBody.Data = userList.Data
+		go trojan.Restart()
 	}
 	return &responseBody
 }
@@ -202,6 +208,15 @@ func ClashSubInfo(c *gin.Context) {
 			domain, port := trojan.GetDomainAndPort()
 			name := fmt.Sprintf("%s:%d", domain, port)
 			configData := string(core.Load(""))
+			alpnData := ""
+			if gjson.Get(configData, "ssl.alpn").Exists() {
+				for _, alpn := range gjson.Get(configData, "ssl.alpn").Array() {
+					if alpn.String() == "h2" {
+						alpnData = ", alpn: [h2, http/1.1]"
+						break
+					}
+				}
+			}
 			if gjson.Get(configData, "websocket").Exists() && gjson.Get(configData, "websocket.enabled").Bool() {
 				if gjson.Get(configData, "websocket.host").Exists() {
 					hostTemp := gjson.Get(configData, "websocket.host").String()
@@ -212,8 +227,8 @@ func ClashSubInfo(c *gin.Context) {
 				wsOpt := fmt.Sprintf("{path: %s%s}", gjson.Get(configData, "websocket.path").String(), wsHost)
 				wsData = fmt.Sprintf(", network: ws, udp: true, ws-opts: %s", wsOpt)
 			}
-			proxyData := fmt.Sprintf("  - {name: %s, server: %s, port: %d, type: trojan, password: %s, sni: %s%s}",
-				name, domain, port, password, domain, wsData)
+			proxyData := fmt.Sprintf("  - {name: %s, server: %s, port: %d, type: trojan, password: %s, sni: %s%s%s}",
+				name, domain, port, password, domain, alpnData, wsData)
 			result := fmt.Sprintf(`proxies:
 %s
 

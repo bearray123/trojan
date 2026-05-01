@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>trojan 管理平台</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main id="authScreen" class="authScreen" hidden>
+    <section id="loginPanel" class="loginPanel">
+      <h1 id="loginTitle">登录</h1>
+      <form id="loginForm">
+        <label>用户名<input id="username" name="username" value="admin" autocomplete="username"></label>
+        <label>密码<input id="password" name="password" type="password" autocomplete="current-password"></label>
+        <div id="loginNotice" class="notice" hidden></div>
+        <button id="loginBtn" class="primary" type="submit">登录</button>
+      </form>
+    </section>
+  </main>
+
+  <main id="appShell" class="appShell" hidden>
+    <aside class="sidebar">
+      <div class="brand"><strong>trojan</strong><span>管理平台</span></div>
+      <nav class="tabs" aria-label="主导航">
+        <button class="tab active" data-tab="home" type="button">首页</button>
+        <button class="tab" data-tab="system" type="button">系统监控</button>
+        <button class="tab" data-tab="users" type="button">用户管理</button>
+        <button class="tab" data-tab="history" type="button">访问历史</button>
+        <button class="tab" data-tab="service" type="button">Trojan管理</button>
+        <button class="tab" data-tab="settings" type="button">设置</button>
+      </nav>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <div><h1 id="pageTitle">首页</h1><p id="pageSub">连接状态与服务压力</p></div>
+        <div class="actions">
+          <button id="refreshBtn" class="primary" type="button">刷新</button>
+        </div>
+      </header>
+
+      <section id="dashboard" hidden>
+        <section class="view active" data-view="home">
+          <div class="summary">
+            <div><span>在线用户</span><strong id="onlineCount">-</strong></div>
+            <div><span>进程 TCP</span><strong id="tcpCount">-</strong><em id="tcpLimit">上限 -</em><em id="tcpLimitSource"></em></div>
+            <div><span>进程 FD</span><strong id="fdCount">-</strong><em id="fdLimit">上限 -</em></div>
+            <div><span>服务运行时长</span><strong id="uptimeCard">-</strong></div>
+          </div>
+          <section class="panel">
+            <div class="panelHead"><h2>服务压力</h2><span id="updatedAt"></span></div>
+            <div class="pressureGrid">
+              <div><div class="meterLabel"><span>TCP 连接占用</span><b id="tcpRatio">-</b></div><div class="meter"><i id="tcpMeter"></i></div></div>
+              <div><div class="meterLabel"><span>FD 占用</span><b id="fdRatio">-</b></div><div class="meter"><i id="fdMeter"></i></div></div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panelHead"><h2>当前连接用户</h2><span>点击刷新获取最新数据</span></div>
+            <div id="notice" class="notice" hidden></div>
+            <div class="tableWrap"><table><thead><tr><th>用户</th><th>状态</th><th>在线 IP</th><th>上传速度</th><th>下载速度</th><th>上传流量</th><th>下载流量</th></tr></thead><tbody id="userRows"></tbody></table></div>
+          </section>
+        </section>
+
+        <section class="view" data-view="users">
+          <section class="panel compactPanel">
+            <div class="panelHead"><h2>用户列表</h2><button id="addUserBtn" class="primary small" type="button">新增用户</button></div>
+            <div class="tableWrap"><table><thead><tr><th>ID</th><th>用户名</th><th>密码</th><th>上传</th><th>下载</th><th>限额</th><th>到期</th><th>操作</th></tr></thead><tbody id="allUserRows"></tbody></table></div>
+          </section>
+        </section>
+
+        <section class="view" data-view="history">
+          <section class="panel compactPanel">
+            <div class="panelHead"><h2>访问历史</h2><button id="collectHistoryBtn" class="primary small" type="button">收集统计</button></div>
+            <form id="historyFilter" class="filterBar">
+              <label>开始日期<input id="historyStart" name="startDate" type="date"></label>
+              <label>结束日期<input id="historyEnd" name="endDate" type="date"></label>
+              <label>用户<select id="historyUser" name="userHash"><option value="">全部用户</option></select></label>
+              <label>目标域名<input id="historyTarget" name="targetHost" placeholder="例如 google.com"></label>
+              <button class="ghost small" type="submit">查询</button>
+            </form>
+            <div class="historyMeta" id="historyMeta">尚未加载</div>
+            <div id="historyGroups" class="historyGroups"></div>
+          </section>
+        </section>
+
+        <section class="view" data-view="service">
+          <section class="panel">
+            <div class="panelHead"><h2>Trojan-Go 服务</h2><span id="h2State"></span></div>
+            <div class="toolbar">
+              <button data-action="start" class="ghost" type="button">启动</button>
+              <button data-action="stop" class="ghost" type="button">停止</button>
+              <button data-action="restart" class="ghost" type="button">重启</button>
+              <button id="switchTypeBtn" class="ghost" type="button">切换 Trojan/Trojan-Go</button>
+            </div>
+            <div class="kvGrid" id="serviceInfo"></div>
+          </section>
+          <section class="panel">
+            <div class="panelHead"><h2>Trojan 日志</h2><button id="logBtn" class="primary small" type="button">查看日志</button></div>
+            <pre id="logBox" class="logBox">点击查看日志，日志中的用户 hash 会自动替换为用户名。</pre>
+          </section>
+        </section>
+
+        <section class="view" data-view="system">
+          <div class="chartGrid" id="chartGrid"></div>
+          <section class="panel">
+            <div class="panelHead"><h2>TLS 证书</h2><button id="renewCertBtn" class="primary small" type="button">续签证书</button></div>
+            <div class="kvGrid certGrid" id="certInfo"></div>
+          </section>
+        </section>
+
+        <section class="view" data-view="settings">
+          <section class="panel">
+            <div class="panelHead"><h2>界面设置</h2><span>主题偏好保存在当前浏览器</span></div>
+            <div class="settingsRow"><span>主题</span><button id="themeBtnInline" class="ghost" type="button">切换主题</button></div>
+          </section>
+          <section class="panel">
+            <div class="panelHead"><h2>登录状态</h2><span>退出当前管理会话</span></div>
+            <div class="settingsRow"><span>当前账号</span><button id="logoutBtn" class="ghost" type="button">退出登录</button></div>
+          </section>
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="userDialog">
+    <form id="userForm" method="dialog" class="dialogForm">
+      <h2 id="userDialogTitle">用户</h2>
+      <input type="hidden" id="userId">
+      <label>用户名<input id="userNameInput"></label>
+      <label>密码<input id="userPassInput"></label>
+      <div class="dialogActions"><button class="ghost" value="cancel" type="button" data-close>取消</button><button class="primary" type="submit">保存</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="shareDialog">
+    <div class="dialogForm wide">
+      <button class="dialogClose" type="button" data-close aria-label="关闭">x</button>
+      <h2>分享入口</h2>
+      <div class="shareGrid">
+        <section>
+          <h3>Trojan</h3>
+          <img id="trojanQr" alt="Trojan二维码">
+          <textarea id="trojanShare" readonly></textarea>
+        </section>
+        <section>
+          <h3>Clash订阅</h3>
+          <img id="clashQr" alt="Clash订阅二维码">
+          <textarea id="clashShare" readonly></textarea>
+        </section>
+        <section>
+          <h3>SS兼容入口</h3>
+          <img id="ssQr" alt="SS兼容入口二维码">
+          <textarea id="ssShare" readonly></textarea>
+        </section>
+      </div>
+      <div class="dialogActions"><button class="primary" type="button" data-close>关闭</button></div>
+    </div>
+  </dialog>
+
+  <script src="/static/app.js?v=202605010245"></script>
+</body>
+</html>

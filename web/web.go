@@ -8,9 +8,13 @@ import (
 	"io/fs"
 	"net/http"
 	"strconv"
+	"strings"
 	"trojan/core"
 	"trojan/util"
 	"trojan/web/controller"
+
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 //go:embed templates/*
@@ -57,7 +61,7 @@ func userRouter(router *gin.Engine) {
 		user.DELETE("", func(c *gin.Context) {
 			stringId := c.Query("id")
 			id, _ := strconv.Atoi(stringId)
-			c.JSON(200, controller.DelUser(uint(id)))
+			c.JSON(200, controller.DelUser(uint(id), RequestUsername(c)))
 		})
 	}
 }
@@ -74,6 +78,9 @@ func trojanRouter(router *gin.Engine) {
 	})
 	router.GET("/trojan/loglevel", func(c *gin.Context) {
 		c.JSON(200, controller.GetLogLevel())
+	})
+	router.GET("/trojan/h2", func(c *gin.Context) {
+		c.JSON(200, controller.H2Profile())
 	})
 	router.GET("/trojan/export", func(c *gin.Context) {
 		result := controller.ExportCsv(c)
@@ -95,6 +102,9 @@ func trojanRouter(router *gin.Engine) {
 		slevel := c.DefaultPostForm("level", "1")
 		level, _ := strconv.Atoi(slevel)
 		c.JSON(200, controller.SetLogLevel(level))
+	})
+	router.POST("/trojan/h2/apply", func(c *gin.Context) {
+		c.JSON(200, controller.ApplyH2Profile())
 	})
 	router.POST("/trojan/domain", func(c *gin.Context) {
 		c.JSON(200, controller.SetDomain(c.PostForm("domain")))
@@ -130,6 +140,31 @@ func dataRouter(router *gin.Engine) {
 	}
 }
 
+func accessHistoryRouter(router *gin.Engine) {
+	history := router.Group("/trojan/access-history")
+	{
+		history.GET("", func(c *gin.Context) {
+			page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+			pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "50"))
+			c.JSON(200, controller.AccessHistoryList(
+				c.Query("startDate"),
+				c.Query("endDate"),
+				c.Query("userHash"),
+				c.Query("targetHost"),
+				c.Query("detailUserHash"),
+				page,
+				pageSize,
+			))
+		})
+		history.GET("/status", func(c *gin.Context) {
+			c.JSON(200, controller.AccessHistoryStatus())
+		})
+		history.POST("/collect", func(c *gin.Context) {
+			c.JSON(200, controller.AccessHistoryCollect())
+		})
+	}
+}
+
 func commonRouter(router *gin.Engine) {
 	common := router.Group("/common")
 	{
@@ -138,6 +173,18 @@ func commonRouter(router *gin.Engine) {
 		})
 		common.GET("/serverInfo", func(c *gin.Context) {
 			c.JSON(200, controller.ServerInfo())
+		})
+		common.GET("/activeUsers", func(c *gin.Context) {
+			c.JSON(200, controller.ActiveUsers())
+		})
+		common.GET("/certInfo", func(c *gin.Context) {
+			c.JSON(200, controller.CertInfo())
+		})
+		common.GET("/qrcode", func(c *gin.Context) {
+			controller.QRCode(c)
+		})
+		common.POST("/cert/renew", func(c *gin.Context) {
+			c.JSON(200, controller.RenewCert())
 		})
 		common.GET("/clashRules", func(c *gin.Context) {
 			c.JSON(200, controller.GetClashRules())
@@ -156,6 +203,15 @@ func commonRouter(router *gin.Engine) {
 }
 
 func staticRouter(router *gin.Engine) {
+	router.Use(func(c *gin.Context) {
+		if c.Request.URL.Path == "/" || strings.HasPrefix(c.Request.URL.Path, "/static/") {
+			c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
+		}
+		c.Next()
+	})
+
 	staticFs, _ := fs.Sub(f, "templates/static")
 	router.StaticFS("/static", http.FS(staticFs))
 
@@ -182,8 +238,10 @@ func Start(host string, port, timeout int, isSSL bool) {
 	trojanRouter(router)
 	userRouter(router)
 	dataRouter(router)
+	accessHistoryRouter(router)
 	commonRouter(router)
 	controller.ScheduleTask()
+	controller.AccessHistoryScheduleTask()
 	controller.CollectTask()
 	util.OpenPort(port)
 	if isSSL {
@@ -191,6 +249,18 @@ func Start(host string, port, timeout int, isSSL bool) {
 		ssl := &config.SSl
 		router.RunTLS(fmt.Sprintf("%s:%d", host, port), ssl.Cert, ssl.Key)
 	} else {
+		if port == 80 {
+			go func() {
+				addr := "127.0.0.1:81"
+				server := &http.Server{
+					Addr:    addr,
+					Handler: h2c.NewHandler(router, &http2.Server{}),
+				}
+				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					fmt.Println("h2c server error: " + err.Error())
+				}
+			}()
+		}
 		router.Run(fmt.Sprintf("%s:%d", host, port))
 	}
 }

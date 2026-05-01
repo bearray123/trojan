@@ -68,6 +68,21 @@ func GetLogLevel() *ResponseBody {
 	return &responseBody
 }
 
+func logNameReplacer() *strings.Replacer {
+	mysql := core.GetMysql()
+	userList, err := mysql.GetData()
+	if err != nil {
+		return strings.NewReplacer()
+	}
+	replacements := make([]string, 0, len(userList)*2)
+	for _, user := range userList {
+		if user.EncryptPass != "" && user.Username != "" {
+			replacements = append(replacements, user.EncryptPass, user.Username)
+		}
+	}
+	return strings.NewReplacer(replacements...)
+}
+
 // Log 通过ws查看trojan实时日志
 func Log(c *gin.Context) {
 	var (
@@ -94,7 +109,9 @@ func Log(c *gin.Context) {
 		fmt.Println(err)
 		return
 	}
+	replacer := logNameReplacer()
 	for line := range result {
+		line = replacer.Replace(line)
 		if err := wsConn.WsWrite(ws.TextMessage, []byte(line+"\n")); err != nil {
 			fmt.Println("can't send: ", line)
 			break
