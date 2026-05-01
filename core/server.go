@@ -128,6 +128,7 @@ func WriteLogLevel(level int) bool {
 func WriteH2Profile() bool {
 	data := Load("")
 	data, _ = sjson.SetBytes(data, "ssl.alpn", []string{"h2", "http/1.1"})
+	data, _ = sjson.SetBytes(data, "ssl.alpn_port_override.h2", 81)
 	data, _ = sjson.SetBytes(data, "tcp.no_delay", true)
 	data, _ = sjson.SetBytes(data, "tcp.keep_alive", true)
 	data, _ = sjson.SetBytes(data, "mux", Mux{

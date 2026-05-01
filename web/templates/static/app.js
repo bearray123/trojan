@@ -157,10 +157,10 @@ async function loadHistoryDetail(userHash, page) {
 }
 function renderService(data) {
   const mux = data.mux || {}, apiInfo = data.api || {};
-  $("#h2State").textContent = data.h2Alpn ? "H2 ALPN 已启用" : "H2 ALPN 未启用";
+  $("#h2State").textContent = data.h2FullyEnabled ? "H2 已完整启用" : (data.h2Alpn ? "H2 ALPN 已启用" : "H2 未完整启用");
   $("#switchTypeBtn").textContent = `切换为 ${data.trojanType === "trojan-go" ? "trojan" : "trojan-go"}`;
   $("#switchTypeBtn").dataset.target = data.trojanType === "trojan-go" ? "trojan" : "trojan-go";
-  $("#serviceInfo").innerHTML = [["Trojan 类型", data.trojanType || "-"], ["ALPN", (data.alpn || []).join(", ") || "-"], ["Mux", mux.Enabled || mux.enabled ? "已启用" : "未启用"], ["Mux 并发", mux.Concurrency || mux.concurrency || "-"], ["API", apiInfo.Enabled || apiInfo.enabled ? "已启用" : "未启用"], ["API 地址", `${apiInfo.APIAddr || apiInfo.api_addr || "127.0.0.1"}:${apiInfo.APIPort || apiInfo.api_port || 10000}`]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
+  $("#serviceInfo").innerHTML = [["Trojan 类型", data.trojanType || "-"], ["ALPN", (data.alpn || []).join(", ") || "-"], ["H2 后端", data.h2Port ? `127.0.0.1:${data.h2Port} ${data.h2BackendReady ? "可用" : "不可用"}` : "-"], ["Mux", mux.Enabled || mux.enabled ? "已启用" : "未启用"], ["Mux 并发", mux.Concurrency || mux.concurrency || "-"], ["API", apiInfo.Enabled || apiInfo.enabled ? "已启用" : "未启用"], ["API 地址", `${apiInfo.APIAddr || apiInfo.api_addr || "127.0.0.1"}:${apiInfo.APIPort || apiInfo.api_port || 10000}`]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
 }
 function pie(name, value, sub) { return `<div class="chartCard"><div class="pie" style="--value:${Math.round(value)}"><span>${value.toFixed(1)}%</span></div><h3>${name}</h3><p>${sub}</p></div>`; }
 function renderSystem(info, cert) {

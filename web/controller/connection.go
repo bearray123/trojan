@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -299,13 +300,30 @@ func H2Profile() *ResponseBody {
 			break
 		}
 	}
+	h2Port := config.SSl.AlpnPortOverride["h2"]
+	h2BackendReady := false
+	h2BackendError := ""
+	if h2Port > 0 {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", h2Port), 500*time.Millisecond)
+		if err == nil {
+			h2BackendReady = true
+			_ = conn.Close()
+		} else {
+			h2BackendError = err.Error()
+		}
+	}
 	responseBody.Data = map[string]interface{}{
-		"trojanType": trojan.Type(),
-		"h2Alpn":     hasH2,
-		"alpn":       config.SSl.Alpn,
-		"mux":        config.Mux,
-		"api":        config.API,
-		"tcp":        config.Tcp,
+		"trojanType":       trojan.Type(),
+		"h2Alpn":           hasH2,
+		"h2Port":           h2Port,
+		"h2BackendReady":   h2BackendReady,
+		"h2BackendError":   h2BackendError,
+		"h2FullyEnabled":   hasH2 && h2Port > 0 && h2BackendReady,
+		"alpn":             config.SSl.Alpn,
+		"alpnPortOverride": config.SSl.AlpnPortOverride,
+		"mux":              config.Mux,
+		"api":              config.API,
+		"tcp":              config.Tcp,
 	}
 	return &responseBody
 }

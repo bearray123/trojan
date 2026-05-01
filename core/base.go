@@ -13,14 +13,15 @@ type Config struct {
 
 // SSL 结构体
 type SSL struct {
-	Cert          string   `json:"cert"`
-	Cipher        string   `json:"cipher"`
-	CipherTls13   string   `json:"cipher_tls13"`
-	Alpn          []string `json:"alpn"`
-	ReuseSession  bool     `json:"reuse_session"`
-	SessionTicket bool     `json:"session_ticket"`
-	Curves        string   `json:"curves"`
-	Sni           string   `json:"sni"`
+	Cert             string         `json:"cert"`
+	Cipher           string         `json:"cipher"`
+	CipherTls13      string         `json:"cipher_tls13"`
+	Alpn             []string       `json:"alpn"`
+	AlpnPortOverride map[string]int `json:"alpn_port_override,omitempty"`
+	ReuseSession     bool           `json:"reuse_session"`
+	SessionTicket    bool           `json:"session_ticket"`
+	Curves           string         `json:"curves"`
+	Sni              string         `json:"sni"`
 }
 
 // TCP 结构体
