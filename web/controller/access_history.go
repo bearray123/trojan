@@ -26,13 +26,15 @@ var (
 )
 
 type accessHistoryRow struct {
-	Username    string `json:"username"`
-	UserHash    string `json:"userHash"`
-	TargetHost  string `json:"targetHost"`
-	ClientIP    string `json:"clientIP"`
-	AccessCount uint64 `json:"accessCount"`
-	Upload      uint64 `json:"upload"`
-	Download    uint64 `json:"download"`
+	Username     string   `json:"username"`
+	UserHash     string   `json:"userHash"`
+	TargetHost   string   `json:"targetHost"`
+	ClientIP     string   `json:"clientIP"`
+	ClientIPs    []string `json:"clientIPs"`
+	AccessCount  uint64   `json:"accessCount"`
+	Upload       uint64   `json:"upload"`
+	Download     uint64   `json:"download"`
+	TotalTraffic uint64   `json:"totalTraffic"`
 }
 
 type accessHistoryUserGroup struct {
@@ -41,6 +43,7 @@ type accessHistoryUserGroup struct {
 	TargetCount   uint64 `json:"targetCount"`
 	AccessCount   uint64 `json:"accessCount"`
 	ClientIPCount uint64 `json:"clientIPCount"`
+	TotalTraffic  uint64 `json:"totalTraffic"`
 }
 
 type accessHistoryDetailPage struct {
@@ -48,6 +51,8 @@ type accessHistoryDetailPage struct {
 	Page     int                `json:"page"`
 	PageSize int                `json:"pageSize"`
 	Total    int                `json:"total"`
+	SortBy   string             `json:"sortBy"`
+	SortDir  string             `json:"sortDir"`
 	Items    []accessHistoryRow `json:"items"`
 }
 
@@ -73,6 +78,21 @@ type accessHistoryCollectResult struct {
 
 type accessHistoryStatus struct {
 	LastCollect string `json:"lastCollect"`
+}
+
+type accessTrafficPeriod struct {
+	StartDate string `json:"startDate"`
+	EndDate   string `json:"endDate"`
+	Upload    uint64 `json:"upload"`
+	Download  uint64 `json:"download"`
+	Total     uint64 `json:"total"`
+	Requests  uint64 `json:"requests"`
+}
+
+type accessTrafficOverview struct {
+	Today       accessTrafficPeriod `json:"today"`
+	Month       accessTrafficPeriod `json:"month"`
+	LastCollect string              `json:"lastCollect"`
 }
 
 func ensureAccessHistoryTables(db *sql.DB) error {
@@ -284,7 +304,7 @@ func setAccessHistoryLastCollect(exec accessHistoryExec, value time.Time) error 
 	return err
 }
 
-func AccessHistoryList(startDate, endDate, userHash, targetHost, detailUserHash string, page, pageSize int) *ResponseBody {
+func AccessHistoryList(startDate, endDate, userHash, targetHost, detailUserHash, sortBy, sortDir string, page, pageSize int) *ResponseBody {
 	responseBody := ResponseBody{Msg: "success"}
 	defer TimeCost(time.Now(), &responseBody)
 
@@ -318,7 +338,8 @@ func AccessHistoryList(startDate, endDate, userHash, targetHost, detailUserHash 
 	groupQuery := fmt.Sprintf(`SELECT COALESCE(u.username, s.user_hash) AS username, s.user_hash,
 			COUNT(DISTINCT s.target_host) AS target_count,
 			SUM(s.access_count) AS access_count,
-			COUNT(DISTINCT s.client_ip) AS client_ip_count
+			COUNT(DISTINCT s.client_ip) AS client_ip_count,
+			SUM(s.upload + s.download) AS total_traffic
 		FROM access_history_stats s
 		LEFT JOIN users u ON u.password = s.user_hash
 		WHERE %s
@@ -335,7 +356,7 @@ func AccessHistoryList(startDate, endDate, userHash, targetHost, detailUserHash 
 	groups := make([]accessHistoryUserGroup, 0)
 	for rows.Next() {
 		var group accessHistoryUserGroup
-		if err := rows.Scan(&group.Username, &group.UserHash, &group.TargetCount, &group.AccessCount, &group.ClientIPCount); err != nil {
+		if err := rows.Scan(&group.Username, &group.UserHash, &group.TargetCount, &group.AccessCount, &group.ClientIPCount, &group.TotalTraffic); err != nil {
 			responseBody.Msg = err.Error()
 			return &responseBody
 		}
@@ -354,7 +375,7 @@ func AccessHistoryList(startDate, endDate, userHash, targetHost, detailUserHash 
 		"lastCollect": lastValue,
 	}
 	if detailUserHash != "" {
-		detail, err := accessHistoryDetail(db, startDate, endDate, targetHost, detailUserHash, page, pageSize)
+		detail, err := accessHistoryDetail(db, startDate, endDate, targetHost, detailUserHash, sortBy, sortDir, page, pageSize)
 		if err != nil {
 			responseBody.Msg = err.Error()
 			return &responseBody
@@ -365,7 +386,25 @@ func AccessHistoryList(startDate, endDate, userHash, targetHost, detailUserHash 
 	return &responseBody
 }
 
-func accessHistoryDetail(db *sql.DB, startDate, endDate, targetHost, userHash string, page, pageSize int) (*accessHistoryDetailPage, error) {
+func normalizeAccessHistorySort(sortBy, sortDir string) (string, string, string) {
+	normalizedBy := "accessCount"
+	primaryColumn := "access_count"
+	secondaryColumn := "total_traffic"
+	if sortBy == "totalTraffic" {
+		normalizedBy = "totalTraffic"
+		primaryColumn = "total_traffic"
+		secondaryColumn = "access_count"
+	}
+	normalizedDir := "desc"
+	direction := "DESC"
+	if strings.EqualFold(sortDir, "asc") {
+		normalizedDir = "asc"
+		direction = "ASC"
+	}
+	return normalizedBy, normalizedDir, fmt.Sprintf("%s %s, %s DESC, target_host ASC", primaryColumn, direction, secondaryColumn)
+}
+
+func accessHistoryDetail(db *sql.DB, startDate, endDate, targetHost, userHash, sortBy, sortDir string, page, pageSize int) (*accessHistoryDetailPage, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -380,10 +419,10 @@ func accessHistoryDetail(db *sql.DB, startDate, endDate, targetHost, userHash st
 	}
 	whereSQL := strings.Join(conditions, " AND ")
 	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM (
-		SELECT s.target_host, s.client_ip
+		SELECT s.target_host
 		FROM access_history_stats s
 		WHERE %s
-		GROUP BY s.target_host, s.client_ip
+		GROUP BY s.target_host
 	) t`, whereSQL)
 	var total int
 	if err := db.QueryRow(countQuery, args...).Scan(&total); err != nil {
@@ -392,14 +431,17 @@ func accessHistoryDetail(db *sql.DB, startDate, endDate, targetHost, userHash st
 
 	detailArgs := append([]interface{}{}, args...)
 	detailArgs = append(detailArgs, (page-1)*pageSize, pageSize)
-	query := fmt.Sprintf(`SELECT COALESCE(u.username, s.user_hash) AS username, s.user_hash, s.target_host, s.client_ip,
-			SUM(s.access_count) AS access_count, SUM(s.upload) AS upload, SUM(s.download) AS download
+	normalizedSortBy, normalizedSortDir, orderBySQL := normalizeAccessHistorySort(sortBy, sortDir)
+	query := fmt.Sprintf(`SELECT COALESCE(u.username, s.user_hash) AS username, s.user_hash, s.target_host,
+			GROUP_CONCAT(DISTINCT NULLIF(s.client_ip, '') ORDER BY s.client_ip SEPARATOR '\n') AS client_ips,
+			SUM(s.access_count) AS access_count, SUM(s.upload) AS upload, SUM(s.download) AS download,
+			SUM(s.upload + s.download) AS total_traffic
 		FROM access_history_stats s
 		LEFT JOIN users u ON u.password = s.user_hash
 		WHERE %s
-		GROUP BY username, s.user_hash, s.target_host, s.client_ip
-		ORDER BY access_count DESC, target_host ASC
-		LIMIT ?, ?`, whereSQL)
+		GROUP BY username, s.user_hash, s.target_host
+		ORDER BY %s
+		LIMIT ?, ?`, whereSQL, orderBySQL)
 	rows, err := db.Query(query, detailArgs...)
 	if err != nil {
 		return nil, err
@@ -408,8 +450,15 @@ func accessHistoryDetail(db *sql.DB, startDate, endDate, targetHost, userHash st
 	items := make([]accessHistoryRow, 0)
 	for rows.Next() {
 		var item accessHistoryRow
-		if err := rows.Scan(&item.Username, &item.UserHash, &item.TargetHost, &item.ClientIP, &item.AccessCount, &item.Upload, &item.Download); err != nil {
+		var clientIPs sql.NullString
+		if err := rows.Scan(&item.Username, &item.UserHash, &item.TargetHost, &clientIPs, &item.AccessCount, &item.Upload, &item.Download, &item.TotalTraffic); err != nil {
 			return nil, err
+		}
+		if clientIPs.Valid && clientIPs.String != "" {
+			item.ClientIPs = strings.Split(clientIPs.String, "\n")
+			item.ClientIP = item.ClientIPs[0]
+		} else {
+			item.ClientIPs = []string{}
 		}
 		items = append(items, item)
 	}
@@ -421,6 +470,8 @@ func accessHistoryDetail(db *sql.DB, startDate, endDate, targetHost, userHash st
 		Page:     page,
 		PageSize: pageSize,
 		Total:    total,
+		SortBy:   normalizedSortBy,
+		SortDir:  normalizedSortDir,
 		Items:    items,
 	}, nil
 }
@@ -459,6 +510,38 @@ func AccessHistoryStatus() *ResponseBody {
 	return &responseBody
 }
 
+func accessHistoryTrafficOverview() (accessTrafficOverview, error) {
+	result := accessTrafficOverview{}
+	db, err := accessHistoryDB()
+	if err != nil {
+		return result, err
+	}
+	defer db.Close()
+	now := time.Now().In(chinaLocation())
+	today := now.Format("2006-01-02")
+	monthStart, monthEnd := monthBounds(now)
+	result.Today.StartDate = today
+	result.Today.EndDate = today
+	result.Month.StartDate = monthStart
+	result.Month.EndDate = monthEnd
+	err = db.QueryRow(`SELECT
+		COALESCE(SUM(CASE WHEN stat_date = ? THEN upload ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN stat_date = ? THEN download ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN stat_date = ? THEN access_count ELSE 0 END), 0),
+		COALESCE(SUM(upload), 0), COALESCE(SUM(download), 0), COALESCE(SUM(access_count), 0)
+		FROM access_history_stats WHERE stat_date BETWEEN ? AND ?`,
+		today, today, today, monthStart, today).Scan(
+		&result.Today.Upload, &result.Today.Download, &result.Today.Requests,
+		&result.Month.Upload, &result.Month.Download, &result.Month.Requests)
+	if err != nil {
+		return result, err
+	}
+	result.Today.Total = addTraffic(result.Today.Upload, result.Today.Download)
+	result.Month.Total = addTraffic(result.Month.Upload, result.Month.Download)
+	_, result.LastCollect, _ = accessHistoryLastCollect(db)
+	return result, nil
+}
+
 func AccessHistoryScheduleTask() {
 	db, err := accessHistoryDB()
 	if err != nil {
@@ -468,7 +551,7 @@ func AccessHistoryScheduleTask() {
 	}
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	accessHistoryCron = cron.New(cron.WithLocation(loc))
-	accessHistoryCron.AddFunc("0 4 * * *", func() {
+	collect := func() {
 		db, err := accessHistoryDB()
 		if err != nil {
 			fmt.Println("AccessHistoryDBError: " + err.Error())
@@ -478,6 +561,11 @@ func AccessHistoryScheduleTask() {
 		if _, err := collectAccessHistory(db); err != nil {
 			fmt.Println("AccessHistoryCollectError: " + err.Error())
 		}
-	})
+	}
+	accessHistoryCron.AddFunc("@every 5m", collect)
 	accessHistoryCron.Start()
+	go func() {
+		time.Sleep(10 * time.Second)
+		collect()
+	}()
 }

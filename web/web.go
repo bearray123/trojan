@@ -20,7 +20,7 @@ import (
 //go:embed templates/*
 var f embed.FS
 
-func userRouter(router *gin.Engine) {
+func userRouter(router *gin.RouterGroup) {
 	user := router.Group("/trojan/user")
 	{
 		user.GET("", func(c *gin.Context) {
@@ -66,7 +66,7 @@ func userRouter(router *gin.Engine) {
 	}
 }
 
-func trojanRouter(router *gin.Engine) {
+func trojanRouter(router *gin.RouterGroup) {
 	router.POST("/trojan/start", func(c *gin.Context) {
 		c.JSON(200, controller.Start())
 	})
@@ -114,7 +114,7 @@ func trojanRouter(router *gin.Engine) {
 	})
 }
 
-func dataRouter(router *gin.Engine) {
+func dataRouter(router *gin.RouterGroup) {
 	data := router.Group("/trojan/data")
 	{
 		data.POST("", func(c *gin.Context) {
@@ -140,7 +140,7 @@ func dataRouter(router *gin.Engine) {
 	}
 }
 
-func accessHistoryRouter(router *gin.Engine) {
+func accessHistoryRouter(router *gin.RouterGroup) {
 	history := router.Group("/trojan/access-history")
 	{
 		history.GET("", func(c *gin.Context) {
@@ -152,6 +152,8 @@ func accessHistoryRouter(router *gin.Engine) {
 				c.Query("userHash"),
 				c.Query("targetHost"),
 				c.Query("detailUserHash"),
+				c.Query("sortBy"),
+				c.Query("sortDir"),
 				page,
 				pageSize,
 			))
@@ -165,7 +167,7 @@ func accessHistoryRouter(router *gin.Engine) {
 	}
 }
 
-func commonRouter(router *gin.Engine) {
+func commonRouter(router *gin.RouterGroup) {
 	common := router.Group("/common")
 	{
 		common.GET("/version", func(c *gin.Context) {
@@ -174,8 +176,14 @@ func commonRouter(router *gin.Engine) {
 		common.GET("/serverInfo", func(c *gin.Context) {
 			c.JSON(200, controller.ServerInfo())
 		})
+		common.GET("/overview", func(c *gin.Context) {
+			c.JSON(200, controller.DashboardOverview(c.Query("refresh") == "1"))
+		})
 		common.GET("/activeUsers", func(c *gin.Context) {
 			c.JSON(200, controller.ActiveUsers())
+		})
+		common.GET("/processMetrics", func(c *gin.Context) {
+			c.JSON(200, controller.ProcessMetrics())
 		})
 		common.GET("/certInfo", func(c *gin.Context) {
 			c.JSON(200, controller.CertInfo())
@@ -202,9 +210,17 @@ func commonRouter(router *gin.Engine) {
 	}
 }
 
+func portalRouter(router *gin.RouterGroup) {
+	portal := router.Group("/portal")
+	portal.Use(PortalOnly())
+	portal.GET("/me/summary", func(c *gin.Context) {
+		c.JSON(200, controller.PortalOverview(PortalUserID(c)))
+	})
+}
+
 func staticRouter(router *gin.Engine) {
 	router.Use(func(c *gin.Context) {
-		if c.Request.URL.Path == "/" || strings.HasPrefix(c.Request.URL.Path, "/static/") {
+		if c.Request.URL.Path == "/" || c.Request.URL.Path == "/portal" || strings.HasPrefix(c.Request.URL.Path, "/static/") {
 			c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 			c.Header("Pragma", "no-cache")
 			c.Header("Expires", "0")
@@ -217,7 +233,11 @@ func staticRouter(router *gin.Engine) {
 
 	router.GET("/", func(c *gin.Context) {
 		indexHTML, _ := f.ReadFile("templates/" + "index.html")
-		c.Writer.Write(indexHTML)
+		c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
+	})
+	router.GET("/portal", func(c *gin.Context) {
+		portalHTML, _ := f.ReadFile("templates/" + "portal.html")
+		c.Data(http.StatusOK, "text/html; charset=utf-8", portalHTML)
 	})
 }
 
@@ -227,19 +247,29 @@ func noTokenRouter(router *gin.Engine) {
 	})
 }
 
-// Start web启动入口
-func Start(host string, port, timeout int, isSSL bool) {
+func newRouter(timeout int, isSSL bool) *gin.Engine {
 	router := gin.Default()
 	router.SetTrustedProxies(nil)
 	router.Use(gzip.Gzip(gzip.DefaultCompression))
 	staticRouter(router)
 	noTokenRouter(router)
-	router.Use(Auth(router, timeout).MiddlewareFunc())
-	trojanRouter(router)
-	userRouter(router)
-	dataRouter(router)
-	accessHistoryRouter(router)
-	commonRouter(router)
+	auth := Auth(router, timeout, isSSL)
+	protected := router.Group("")
+	protected.Use(auth.MiddlewareFunc())
+	portalRouter(protected)
+	admin := protected.Group("")
+	admin.Use(AdminOnly())
+	trojanRouter(admin)
+	userRouter(admin)
+	dataRouter(admin)
+	accessHistoryRouter(admin)
+	commonRouter(admin)
+	return router
+}
+
+// Start web启动入口
+func Start(host string, port, timeout int, isSSL bool) {
+	router := newRouter(timeout, isSSL)
 	controller.ScheduleTask()
 	controller.AccessHistoryScheduleTask()
 	controller.CollectTask()

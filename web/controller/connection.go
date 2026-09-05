@@ -232,7 +232,7 @@ func trojanProcessStats() []trojanProcessMetric {
 	return result
 }
 
-// ActiveUsers 获取当前在线用户和进程连接指标
+// ActiveUsers 获取当前在线用户。进程级扫描由系统监控独立按低频调用。
 func ActiveUsers() *ResponseBody {
 	responseBody := ResponseBody{Msg: "success"}
 	defer TimeCost(time.Now(), &responseBody)
@@ -273,14 +273,21 @@ func ActiveUsers() *ResponseBody {
 		apiError = apiErr.Error()
 	}
 	responseBody.Data = map[string]interface{}{
-		"apiEnabled":     apiAddr != "",
-		"apiAddr":        apiAddr,
-		"apiError":       apiError,
-		"users":          metrics,
-		"onlineUsers":    onlineMetrics,
-		"processMetrics": trojanProcessStats(),
-		"note":           "Trojan-Go API exposes per-user online IP count, speed and traffic. Per-user TCP FD ownership is not exposed by Trojan-Go, so TCP/FD counts are reported at the trojan process level.",
+		"apiEnabled":  apiAddr != "",
+		"apiAddr":     apiAddr,
+		"apiError":    apiError,
+		"users":       metrics,
+		"onlineUsers": onlineMetrics,
+		"note":        "Trojan-Go API exposes per-user online IP count, speed and traffic.",
 	}
+	return &responseBody
+}
+
+// ProcessMetrics returns the heavier process-level TCP/FD scan for System Monitor only.
+func ProcessMetrics() *ResponseBody {
+	responseBody := ResponseBody{Msg: "success"}
+	defer TimeCost(time.Now(), &responseBody)
+	responseBody.Data = trojanProcessStats()
 	return &responseBody
 }
 
@@ -314,6 +321,9 @@ func H2Profile() *ResponseBody {
 	}
 	responseBody.Data = map[string]interface{}{
 		"trojanType":       trojan.Type(),
+		"trojanState":      trojan.ActiveState(),
+		"trojanRunning":    trojan.IsRunning(),
+		"trojanUptime":     trojan.UpTime(),
 		"h2Alpn":           hasH2,
 		"h2Port":           h2Port,
 		"h2BackendReady":   h2BackendReady,

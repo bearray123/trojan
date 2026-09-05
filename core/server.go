@@ -8,7 +8,12 @@ import (
 	"os"
 )
 
-var configPath = "/usr/local/etc/trojan/config.json"
+var configPath = func() string {
+	if path := os.Getenv("TROJAN_CONFIG_PATH"); path != "" {
+		return path
+	}
+	return "/usr/local/etc/trojan/config.json"
+}()
 
 // ServerConfig 结构体
 type ServerConfig struct {
