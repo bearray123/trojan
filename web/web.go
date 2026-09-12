@@ -170,6 +170,9 @@ func accessHistoryRouter(router *gin.RouterGroup) {
 func commonRouter(router *gin.RouterGroup) {
 	common := router.Group("/common")
 	{
+		common.GET("/ops", func(c *gin.Context) {
+			c.JSON(200, controller.OpsOverview(c.DefaultQuery("range", "24h")))
+		})
 		common.GET("/version", func(c *gin.Context) {
 			c.JSON(200, controller.Version())
 		})
@@ -273,6 +276,7 @@ func Start(host string, port, timeout int, isSSL bool) {
 	controller.ScheduleTask()
 	controller.AccessHistoryScheduleTask()
 	controller.CollectTask()
+	controller.StartOpsMonitor()
 	util.OpenPort(port)
 	if isSSL {
 		config := core.GetConfig()

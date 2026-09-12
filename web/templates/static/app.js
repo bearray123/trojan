@@ -1,7 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 const state = { tab: "home", theme: localStorage.getItem("theme") || "light", users: [], domain: "", port: 443, version: {}, overview: null, overviewFetchedAt: 0, processMetrics: [], processFetchedAt: 0, cert: null, certFetchedAt: 0, service: {}, serviceBusy: "", refreshTimer: 0, loginTitle: "登录", refreshing: false, history: { groups: [], expanded: "", pages: {}, pageSizes: {}, sorts: {}, details: {}, meta: {}, datePicker: { active: "start", month: "" } } };
-const titles = { home: ["仪表盘", "今日业务、账号健康与在线状态"], users: ["用户管理", "用户、流量、期限与分享"], history: ["访问历史", "用户访问目标统计"], service: ["Trojan管理", "服务控制、切换与日志"], system: ["系统监控", "月度容量、资源与进程压力"], settings: ["设置", "界面主题与偏好"] };
+const titles = { home: ["仪表盘", "今日业务、账号健康与在线状态"], ops: ["运维监控", "合成探测、SLA 趋势与资源风险"], users: ["用户管理", "用户、流量、期限与分享"], history: ["访问历史", "用户访问目标统计"], service: ["Trojan管理", "服务控制、切换与日志"], system: ["系统监控", "月度容量、资源与进程压力"], settings: ["设置", "界面主题与偏好"] };
 
 function rightRotate(v, n) { return (v >>> n) | (v << (32 - n)); }
 function sha224(input) {
@@ -38,8 +38,8 @@ function form(data) { const body = new URLSearchParams(); Object.entries(data).f
 async function api(path, options) { const r = await fetch(path, { credentials: "same-origin", cache: "no-store", headers: { Accept: "application/json" }, ...options }); if (r.status === 401) { showLogin(false); throw new Error("未登录或登录已过期"); } if (r.status === 403) throw new Error("当前账号无权访问该功能"); const b = await r.json(); if (b.Msg && b.Msg !== "success") throw new Error(b.Msg); return b.Data || b.data || {}; }
 function startAutoRefresh() {
   clearInterval(state.refreshTimer);
-  const interval = state.tab === "system" || state.tab === "home" || state.tab === "service" ? 5000 : 0;
-  if (interval) state.refreshTimer = setInterval(() => refresh(false), interval);
+  const interval = state.tab === "ops" ? 15000 : (state.tab === "system" || state.tab === "home" || state.tab === "service" ? 5000 : 0);
+  if (interval) state.refreshTimer = setInterval(() => { if (document.visibilityState !== "hidden") refresh(false); }, interval);
 }
 
 function formatUptime(value) {
@@ -57,10 +57,9 @@ function formatUptime(value) {
   labels.push(`${minutes}分`);
   return labels.join("");
 }
-function updateHeaderActions() { $("#refreshBtn").hidden = !(state.tab === "home" || state.tab === "system" || state.tab === "service"); }
 function applyTheme() { document.documentElement.dataset.theme = state.theme; const label = state.theme === "dark" ? "Light" : "暗黑"; $("#themeBtnInline").textContent = label; localStorage.setItem("theme", state.theme); }
 function switchTheme() { state.theme = state.theme === "dark" ? "light" : "dark"; applyTheme(); }
-function switchTab(tab) { state.tab = tab; $$(".tab").forEach((i) => i.classList.toggle("active", i.dataset.tab === tab)); $$(".view").forEach((i) => i.classList.toggle("active", i.dataset.view === tab)); $("#pageTitle").textContent = titles[tab][0]; $("#pageSub").textContent = titles[tab][1]; updateHeaderActions(); startAutoRefresh(); refresh(true); }
+function switchTab(tab) { state.tab = tab; $$(".tab").forEach((i) => i.classList.toggle("active", i.dataset.tab === tab)); $$(".view").forEach((i) => i.classList.toggle("active", i.dataset.view === tab)); $("#pageTitle").textContent = titles[tab][0]; $("#pageSub").textContent = titles[tab][1]; if (window.OpsMonitor) window.OpsMonitor.setActive(tab === "ops"); startAutoRefresh(); refresh(true); }
 function showDashboard() { $("#authScreen").hidden = true; $("#appShell").hidden = false; $("#dashboard").hidden = false; setLoginNotice(""); startAutoRefresh(); refresh(true); }
 function showLogin(isRegister, title) {
   clearInterval(state.refreshTimer);
@@ -416,8 +415,7 @@ function setQR(img, text) {
 async function refresh(force = false) {
   if (state.refreshing) return;
   state.refreshing = true;
-  const tab = state.tab, btn = $("#refreshBtn"), manual = force === true;
-  if (manual) { btn.disabled = true; btn.textContent = "刷新中"; }
+  const tab = state.tab;
   try {
     if (tab === "home") {
       const needOverview = force || !state.overviewFetchedAt || Date.now() - state.overviewFetchedAt >= 60000;
@@ -425,6 +423,10 @@ async function refresh(force = false) {
       if (state.tab !== tab) return;
       if (overview) { state.overview = overview; state.overviewFetchedAt = Date.now(); renderDashboardOverview(overview); }
       renderActive(active);
+    }
+    if (tab === "ops") {
+      await window.OpsMonitor.refresh(api, force);
+      if (state.tab !== tab) return;
     }
     if (tab === "users") {
       await loadUsers();
@@ -457,10 +459,11 @@ async function refresh(force = false) {
       setSystemNotice("");
     }
   } catch (e) {
-    if (tab === "system") setSystemNotice(e.message); else setNotice(e.message);
+    if (tab === "ops" && window.OpsMonitor) window.OpsMonitor.showError(e.message);
+    else if (tab === "system") setSystemNotice(e.message);
+    else setNotice(e.message);
   } finally {
     state.refreshing = false;
-    if (manual) { btn.disabled = false; btn.textContent = "刷新"; }
   }
 }
 function openUserDialog(user) { $("#userDialogTitle").textContent = user ? "编辑用户" : "新增用户"; $("#userId").value = user ? user.ID : ""; $("#userNameInput").value = user ? user.Username : ""; $("#userPassInput").value = user ? passOf(user) : ""; $("#userDialog").showModal(); }
@@ -492,7 +495,6 @@ function startLog() {
 }
 async function boot() {
   applyTheme();
-  updateHeaderActions();
   try {
     const r = await fetch("/auth/check", { credentials: "same-origin" });
     if (r.status === 201) return showLogin(true);
@@ -566,7 +568,6 @@ $("#loginForm").addEventListener("submit", async (e) => {
   }
   try { await finishLogin(); } catch (error) { setLoginNotice(error.message); }
 });
-$("#refreshBtn").addEventListener("click", () => refresh(true));
 $("#logoutBtn").addEventListener("click", logout);
 $("#themeBtnInline").addEventListener("click", switchTheme);
 $("#addUserBtn").addEventListener("click", () => openUserDialog());

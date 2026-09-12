@@ -68,8 +68,11 @@ func dashboardAccounts(now time.Time) (dashboardAccountSummary, error) {
 	if err != nil {
 		return result, err
 	}
-	result.Total = len(users)
 	for _, user := range users {
+		if isOpsProbeHash(user.EncryptPass) {
+			continue
+		}
+		result.Total++
 		status, _, _, statusErr := portalStatus(now, user.ExpiryDate, user.Quota, addTraffic(user.Upload, user.Download))
 		if statusErr != nil {
 			return result, statusErr

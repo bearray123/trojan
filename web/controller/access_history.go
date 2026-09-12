@@ -238,7 +238,7 @@ func collectAccessHistory(db *sql.DB) (*accessHistoryCollectResult, error) {
 	for scanner.Scan() {
 		result.Scanned++
 		stat, ok := parseAccessLogLine(scanner.Text(), china)
-		if !ok {
+		if !ok || isOpsProbeHash(stat.UserHash) {
 			continue
 		}
 		result.Matched++

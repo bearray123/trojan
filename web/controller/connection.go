@@ -249,6 +249,9 @@ func ActiveUsers() *ResponseBody {
 	metrics := make([]userConnectionMetric, 0, len(userList))
 	onlineMetrics := make([]userConnectionMetric, 0)
 	for _, user := range userList {
+		if isOpsProbeHash(user.EncryptPass) {
+			continue
+		}
 		status := statusByHash[user.EncryptPass]
 		metric := userConnectionMetric{
 			ID:              user.ID,
